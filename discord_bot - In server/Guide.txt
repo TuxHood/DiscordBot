@@ -1,0 +1,23 @@
+App commands, slash commands
+
+ctx : context
+author : person who wrote the commands
+mention : =ping
+
+(name="") : name of the command
+(aliases = ["",""]) : multiple alternative names 
+
+
+discord.Embed{title,description,color}
+
+
+cogs = special feature / function of a bot, to organize, update/remove from bot easier
+
+========================================
+Slash Commands
+
+@client.tree.command(name="", description="") #Snake case naming conventions
+
+async def hello(interaction: discord.Integration):
+    await interaction.response.send_message(f"{interaction.user.mention} Hello!", ephemeral = bool)
+    #ephemeral = if only you can see the message
