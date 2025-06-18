@@ -5,7 +5,7 @@ import requests
 class ZeroTwoCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.webhook_url = ""
+        self.webhook_url = "http://10.10.10.113:5678/webhook/zero-two"
     @commands.command(name="ask")
     async def ask_zero_two(self, ctx, *, message):
         """Ask Zero Two a question and get a reply via n8n"""
