@@ -22,4 +22,4 @@ async def hello(interaction: discord.Integration):
     await interaction.response.send_message(f"{interaction.user.mention} Hello!", ephemeral = bool)
     #ephemeral = if only you can see the message
 
-SET UP FFMEPG ON YOUR SERVER TO USE THIS
+SET UP FFMPEG ON YOUR SERVER TO USE THIS
