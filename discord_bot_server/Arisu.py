@@ -54,7 +54,7 @@ async def on_guild_join(guild):
 async def on_guild_remove(guild):
     conn = sqlite3.connect("servers_info/main.db")
     cursor = conn.cursor()
-    cursor.execute("DELETE * FROM Guilds WHERE guild_id = ?", (guild.id,))
+    cursor.execute("DELETE FROM Guilds WHERE guild_id = ?", (guild.id,))
     conn.commit()
     conn.close()
 

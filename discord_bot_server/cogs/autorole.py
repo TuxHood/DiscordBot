@@ -17,12 +17,17 @@ class AutoRole(commands.Cog):
         connection = sqlite3.connect("./servers_info/main.db")
         cursor = connection.cursor()
         
-        cursor.execute("SELECT auto_role_id FROM Auto_role WHERE guild_id = ?", (member.guild.id))
-        
-        auto_role_id = cursor.fetchone()
-           
-        if auto_role_id:
-            await member.add_roles(member.guild.get_role(auto_role_id))
+        cursor.execute(
+            "SELECT auto_role_id FROM Auto_role WHERE guild_id = ?",
+            (member.guild.id,)
+        )
+
+        result = cursor.fetchone()
+
+        if result and result[0]:
+            role = member.guild.get_role(result[0])
+            if role:
+                await member.add_roles(role)
         
     @app_commands.command(name="set_auto_role", description = "[ADMIN] Sets an automatic join role for this server.")
     @has_permissions(administrator=True)
