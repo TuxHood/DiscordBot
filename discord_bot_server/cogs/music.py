@@ -58,27 +58,42 @@ class Music(commands.Cog):
             return
 
         try:
-            if ctx.guild.id in self.voice_clients:
-                current_channel = self.voice_clients[ctx.guild.id].channel
-                if ctx.author.voice.channel != current_channel:
-                    await ctx.send(f"⚠️ I'm already playing music in `{current_channel.name}`. Join that channel to use commands.")
-                    return
+            existing_vc = self.voice_clients.get(ctx.guild.id)
 
-            if ctx.guild.id not in self.voice_clients or not self.voice_clients[ctx.guild.id].is_connected():
-                vc = await ctx.author.voice.channel.connect()
-                self.voice_clients[ctx.guild.id] = vc
-            else:
-                vc = self.voice_clients[ctx.guild.id]
+            # Disconnect stale client if needed
+            if existing_vc:
+                if existing_vc.is_connected():
+                    if existing_vc.channel != ctx.author.voice.channel:
+                        await ctx.send(
+                            f"⚠️ I'm already playing in `{existing_vc.channel.name}`. "
+                            f"Join that channel to control me!"
+                        )
+                        return
+                else:
+                    try:
+                        await existing_vc.disconnect(force=True)
+                    except:
+                        pass
 
+            # Fresh connect
+            vc = await ctx.author.voice.channel.connect()
+            self.voice_clients[ctx.guild.id] = vc
+
+            # Queue logic
             self.add_to_queue(ctx.guild.id, query)
-
             if not vc.is_playing():
                 await self.play_next(ctx)
             else:
-                await ctx.send("🎵 Added to the queue.")
-        except Exception as e:
-            await ctx.send(f"❌ Error: {e}")
+                await ctx.send("🎵 Added to queue.")
 
+        except discord.Forbidden:
+            await ctx.send("🚫 I don't have permission to join that channel!")
+        except discord.ClientException as e:
+            await ctx.send(f"❌ Voice client error: {e}")
+        except Exception as e:
+            await ctx.send(f"❌ Unexpected: `{type(e).__name__}: {e}`")
+
+    
     @commands.command()
     async def pause(self, ctx):
         if ctx.guild.id in self.voice_clients:
