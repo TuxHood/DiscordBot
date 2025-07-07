@@ -58,25 +58,21 @@ class Music(commands.Cog):
             return
 
         try:
-            existing_vc = self.voice_clients.get(ctx.guild.id)
+            channel = ctx.author.voice.channel
+            vc = self.voice_clients.get(ctx.guild.id)
 
-            # Disconnect stale client if needed
-            if existing_vc:
-                if existing_vc.is_connected():
-                    if existing_vc.channel != ctx.author.voice.channel:
-                        await ctx.send(
-                            f"⚠️ I'm already playing in `{existing_vc.channel.name}`. "
-                            f"Join that channel to control me!"
-                        )
-                        return
-                else:
+            if vc:
+                if not vc.is_connected():
                     try:
-                        await existing_vc.disconnect(force=True)
-                    except:
+                        await vc.disconnect(force=True)
+                    except Exception:
                         pass
+                    vc = await channel.connect()
+                elif vc.channel != channel:
+                    await vc.move_to(channel)
+            else:
+                vc = await channel.connect()
 
-            # Fresh connect
-            vc = await ctx.author.voice.channel.connect()
             self.voice_clients[ctx.guild.id] = vc
 
             # Queue logic
