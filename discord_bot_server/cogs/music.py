@@ -1,183 +1,214 @@
-import discord
-from discord.ext import commands
-import yt_dlp
 import asyncio
-import random
+import re
+import logging
+from typing import Dict, List, Optional, Union
+
+import discord
+from discord.ext import commands, tasks
+import mafic
+
+log = logging.getLogger("music")
+
+
+def pick_first_track(result: Union[List[mafic.Track], mafic.Playlist, None]) -> Optional[mafic.Track]:
+    """Handle Mafic return types: list[Track] | Playlist | None."""
+    if result is None:
+        return None
+    if isinstance(result, list):
+        return result[0] if result else None
+    if isinstance(result, mafic.Playlist):
+        if result.tracks:
+            idx = getattr(result, "selected_track", None)
+            if isinstance(idx, int) and 0 <= idx < len(result.tracks):
+                return result.tracks[idx]
+            return result.tracks[0]
+    return None
+
+
+def player_is_playing(vc: object) -> bool:
+    """Robust check across Mafic versions for 'is the player playing?'."""
+    if not isinstance(vc, mafic.Player):
+        return False
+
+    # 1) Some versions have a boolean property 'playing'
+    val = getattr(vc, "playing", None)
+    if isinstance(val, bool):
+        return val
+
+    # 2) Some have a method 'is_playing()'
+    meth = getattr(vc, "is_playing", None)
+    if callable(meth):
+        try:
+            return bool(meth())
+        except Exception:
+            pass
+
+    # 3) Fallback: consider 'current'/'track' presence as playing-ish
+    for attr in ("current", "track", "current_track"):
+        if getattr(vc, attr, None) is not None:
+            return True
+
+    return False
+
 
 class Music(commands.Cog):
-    def __init__(self, bot):
+    """Music commands using Mafic + Lavalink v4."""
+
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.voice_clients = {}
-        self.queues = {}
-        self.ytdl = yt_dlp.YoutubeDL({
-            "format": "bestaudio",
-            "noplaylist": True,
-            "default_search": "ytsearch"
-        })
-        self.ffmpeg_options = {
-            'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
-            'options': '-vn -filter:a "volume=0.25"'
-        }
-        self.current_tracks = {}  # Track currently playing
+        self.queues: Dict[int, asyncio.Queue[mafic.Track]] = {}
+        self.autoplay_loop.start()
 
-    def add_to_queue(self, guild_id, query):
+    def get_queue(self, guild_id: int) -> asyncio.Queue[mafic.Track]:
         if guild_id not in self.queues:
-            self.queues[guild_id] = []
-        self.queues[guild_id].append(query)
+            self.queues[guild_id] = asyncio.Queue()
+        return self.queues[guild_id]
 
-    def get_next_song(self, guild_id):
-        if guild_id in self.queues and self.queues[guild_id]:
-            return self.queues[guild_id].pop(0)
-        return None
+    async def ensure_player(self, ctx: commands.Context) -> mafic.Player:
+        """Ensure a voice connection + Mafic Player for this guild."""
+        if not isinstance(ctx.author, discord.Member):
+            raise commands.CommandError("This command must be used in a guild.")
+        if not ctx.author.voice or not ctx.author.voice.channel:
+            await ctx.send("You must join a voice channel first.")
+            raise commands.CommandError("Author not in a voice channel.")
 
-    async def play_next(self, ctx):
-        next_query = self.get_next_song(ctx.guild.id)
-        if next_query:
+        player = ctx.voice_client
+        if player and isinstance(player, mafic.Player):
+            return player
+
+        log.info("Connecting to voice channel %s in guild %s", ctx.author.voice.channel, ctx.guild.id)
+        player = await ctx.author.voice.channel.connect(cls=mafic.Player)
+        # tiny pause helps first-play vs voice handshake
+        await asyncio.sleep(0.3)
+        return player
+
+    # ---------- Background: auto play next ----------
+    @tasks.loop(seconds=1.0)
+    async def autoplay_loop(self):
+        for guild in list(self.bot.guilds):
             try:
-                data = await asyncio.get_event_loop().run_in_executor(None, lambda: self.ytdl.extract_info(next_query, download=False))
-                if 'entries' in data:
-                    data = data['entries'][0]
-                song = data['url']
-                self.current_tracks[ctx.guild.id] = data['title']
-                player = discord.FFmpegOpusAudio(song, **self.ffmpeg_options)
-                vc = self.voice_clients[ctx.guild.id]
-                vc.play(player, after=lambda e: asyncio.run_coroutine_threadsafe(self.play_next(ctx), self.bot.loop))
-                await ctx.send(f"▶️ Now playing: **{data['title']}**")
-            except Exception as e:
-                await ctx.send(f"❌ Failed to play next track: {e}")
-        else:
-            if ctx.guild.id in self.voice_clients:
-                await self.voice_clients[ctx.guild.id].disconnect()
-                del self.voice_clients[ctx.guild.id]
-                self.current_tracks.pop(ctx.guild.id, None)
+                vc = guild.voice_client
+                if not vc or not isinstance(vc, mafic.Player):
+                    continue
+                if player_is_playing(vc):
+                    continue
 
-    @commands.command()
-    async def play(self, ctx, *, query: str):
-        if ctx.author.voice is None:
-            await ctx.send("❗ You need to be in a voice channel first!")
-            return
+                q = self.get_queue(guild.id)
+                if not q.empty():
+                    next_track = await q.get()
+                    title = getattr(next_track, "title", "unknown")
+                    log.info("Auto-playing next track in guild %s: %s", guild.id, title)
+                    await vc.play(next_track)
+            except Exception as e:
+                log.exception("Autoplay loop error in guild %s: %s", guild.id, e)
+
+    @autoplay_loop.before_loop
+    async def before_autoplay_loop(self):
+        await self.bot.wait_until_ready()
+
+    # ---------- Diagnostics ----------
+    @commands.command(help="Show Lavalink/player diagnostics.")
+    async def diag(self, ctx: commands.Context):
+        pool = getattr(self.bot, "lavalink", None)
+        label, connected, nodes_count = "None", False, 0
+        if pool and hasattr(pool, "nodes"):
+            try:
+                nodes = list(pool.nodes.values())
+                nodes_count = len(nodes)
+                if nodes:
+                    label = getattr(nodes[0], "label", "Unknown")
+                    connected = bool(getattr(nodes[0], "connected", False))
+            except Exception:
+                pass
+
+        vc = ctx.voice_client
+        q = self.get_queue(ctx.guild.id)
+        playing = player_is_playing(vc)
+
+        await ctx.send(
+            "```yaml\n"
+            f"guild: {ctx.guild.id}\n"
+            f"nodes_count: {nodes_count}\n"
+            f"node: {label}\n"
+            f"node_connected: {connected}\n"
+            f"player_present: {isinstance(vc, mafic.Player)}\n"
+            f"playing: {playing}\n"
+            f"queue_size: {q.qsize()}\n"
+            "```"
+        )
+
+    # ---------- Commands (prefix: !) ----------
+    @commands.command(help="Join your voice channel.")
+    async def join(self, ctx: commands.Context):
+        player = await self.ensure_player(ctx)
+        await ctx.send(f"Joined {player.channel.mention}.")
+
+    @commands.command(help="Play a track from URL or search (e.g., 'lofi').")
+    async def play(self, ctx: commands.Context, *, query: str):
+        player = await self.ensure_player(ctx)
 
         try:
-            vc = ctx.voice_client
-
-            if vc:
-                # Already connected
-                if vc.channel != ctx.author.voice.channel:
-                    await ctx.send(
-                        f"⚠️ I'm already playing in `{vc.channel.name}`. "
-                        f"Join that channel to control me!"
-                    )
-                    return
+            if re.match(r"^https?://", query, re.IGNORECASE):
+                result = await player.fetch_tracks(query)
+                log.info("Fetched tracks via URL for guild %s", ctx.guild.id)
             else:
-                # No connection yet
-                vc = await ctx.author.voice.channel.connect()
-            # Track voice client
-            self.voice_clients[ctx.guild.id] = vc
-
-            # Queue logic
-            self.add_to_queue(ctx.guild.id, query)
-            if not vc.is_playing():
-                await self.play_next(ctx)
-            else:
-                await ctx.send("🎵 Added to queue.")
-
-        except discord.Forbidden:
-            await ctx.send("🚫 I don't have permission to join that channel!")
-        except discord.ClientException as e:
-            await ctx.send(f"❌ Voice client error: {e}")
+                result = await player.fetch_tracks(query, search_type=mafic.SearchType.YOUTUBE)
+                log.info("Searched YouTube for '%s' in guild %s", query, ctx.guild.id)
         except Exception as e:
-            await ctx.send(f"❌ Unexpected: `{type(e).__name__}: {e}`")
+            log.exception("Search failed: %s", e)
+            await ctx.send(f"Search failed: `{e}`")
+            return
 
-    
-    @commands.command()
-    async def pause(self, ctx):
-        if ctx.guild.id in self.voice_clients:
-            self.voice_clients[ctx.guild.id].pause()
-            await ctx.send("⏸️ Paused.")
+        track = pick_first_track(result)
+        if not track:
+            await ctx.send("No results found.")
+            return
 
-    @commands.command()
-    async def resume(self, ctx):
-        if ctx.guild.id in self.voice_clients:
-            self.voice_clients[ctx.guild.id].resume()
-            await ctx.send("▶️ Resumed.")
-
-    @commands.command()
-    async def stop(self, ctx):
-        if ctx.guild.id in self.voice_clients:
-            self.voice_clients[ctx.guild.id].stop()
-            await self.voice_clients[ctx.guild.id].disconnect()
-            del self.voice_clients[ctx.guild.id]
-            self.queues[ctx.guild.id] = []
-            self.current_tracks.pop(ctx.guild.id, None)
-            await ctx.send("⏹️ Stopped and cleared queue.")
-
-    @commands.command()
-    async def skip(self, ctx):
-        if ctx.guild.id in self.voice_clients and self.voice_clients[ctx.guild.id].is_playing():
-            self.voice_clients[ctx.guild.id].stop()
-            await ctx.send("⏭️ Skipped current track.")
+        if not player_is_playing(player):
+            await asyncio.sleep(0.5)  # helps if join+play race
+            await player.play(track)
+            title = getattr(track, "title", "unknown")
+            log.info("Now playing in guild %s: %s", ctx.guild.id, title)
+            await ctx.send(f"▶️ Now playing: **{title}**")
         else:
-            await ctx.send("⚠️ Nothing is playing to skip.")
+            q = self.get_queue(ctx.guild.id)
+            await q.put(track)
+            title = getattr(track, "title", "unknown")
+            log.info("Queued in guild %s: %s", ctx.guild.id, title)
+            await ctx.send(f"➕ Queued: **{title}**")
 
-    @commands.command()
-    async def queue(self, ctx):
-        if ctx.guild.id not in self.queues or not self.queues[ctx.guild.id]:
-            await ctx.send("📭 The queue is currently empty.")
+    @commands.command(help="Skip the current track.")
+    async def skip(self, ctx: commands.Context):
+        player = ctx.voice_client
+        if not player or not isinstance(player, mafic.Player) or not player_is_playing(player):
+            await ctx.send("Nothing is playing.")
+            return
+        await player.stop()
+        await ctx.send("⏭️ Skipped.")
+
+    @commands.command(help="Stop playback and clear the queue.")
+    async def stop(self, ctx: commands.Context):
+        player = ctx.voice_client
+        q = self.get_queue(ctx.guild.id)
+        while not q.empty():
+            try:
+                q.get_nowait()
+                q.task_done()
+            except Exception:
+                break
+        if player and isinstance(player, mafic.Player):
+            await player.stop()
+        await ctx.send("⏹️ Stopped and cleared the queue.")
+
+    @commands.command(help="Disconnect the bot from voice.")
+    async def leave(self, ctx: commands.Context):
+        player = ctx.voice_client
+        if player and isinstance(player, mafic.Player):
+            await player.disconnect()
+            await ctx.send("👋 Left the channel.")
         else:
-            queue_list = "\n".join(f"{i+1}. {url}" for i, url in enumerate(self.queues[ctx.guild.id]))
-            await ctx.send(f"**🎶 Current Queue:**\n{queue_list}")
-
-    @commands.command()
-    async def now(self, ctx):
-        track = self.current_tracks.get(ctx.guild.id)
-        if track:
-            await ctx.send(f"🎧 Now playing: **{track}**")
-        else:
-            await ctx.send("⚠️ No track is currently playing.")
-
-    @commands.command()
-    async def leave(self, ctx):
-        if ctx.guild.id in self.voice_clients:
-            await self.voice_clients[ctx.guild.id].disconnect()
-            del self.voice_clients[ctx.guild.id]
-            self.current_tracks.pop(ctx.guild.id, None)
-            await ctx.send("👋 Left the voice channel.")
-        else:
-            await ctx.send("⚠️ I'm not in a voice channel.")
-
-    @commands.command()
-    async def remove(self, ctx, index: int):
-        if ctx.guild.id in self.queues and 0 < index <= len(self.queues[ctx.guild.id]):
-            removed = self.queues[ctx.guild.id].pop(index - 1)
-            await ctx.send(f"❌ Removed track {index}: {removed}")
-        else:
-            await ctx.send("⚠️ Invalid index.")
-
-    @commands.command()
-    async def shuffle(self, ctx):
-        if ctx.guild.id in self.queues and len(self.queues[ctx.guild.id]) > 1:
-            random.shuffle(self.queues[ctx.guild.id])
-            await ctx.send("🔀 Queue shuffled.")
-        else:
-            await ctx.send("⚠️ Not enough songs in the queue to shuffle.")
-
-    @commands.command()
-    async def helpmusic(self, ctx):
-        help_text = (
-            "🎵 **Music Bot Commands** 🎵\n"
-            "`!play <query>` - Play or queue a song.\n"
-            "`!pause` - Pause the current track.\n"
-            "`!resume` - Resume playback.\n"
-            "`!stop` - Stop and clear the queue.\n"
-            "`!skip` - Skip to the next song.\n"
-            "`!queue` - Show the song queue.\n"
-            "`!now` - Show the currently playing track.\n"
-            "`!leave` - Make the bot leave the voice channel.\n"
-            "`!remove <index>` - Remove a song by its position in the queue.\n"
-            "`!shuffle` - Shuffle the current queue."
-        )
-        await ctx.send(help_text)
+            await ctx.send("I’m not in a voice channel.")
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Music(bot))
