@@ -1,109 +1,142 @@
-import discord
 import os
 import asyncio
-from dotenv import load_dotenv
-from discord.ext import commands, tasks
-from itertools import cycle
+import warnings
+import logging
 import sqlite3
+from itertools import cycle
 
-#[IMPORTANT] Add required text files 
-requirements = ["reaction_role"]
+import discord
+from discord.ext import commands, tasks
+from dotenv import load_dotenv
+import mafic
 
-#Initialize Token from .env
+# ---------- Logging (SEE CONSOLE) ----------
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(levelname)s:%(name)s: %(message)s",
+)
+logging.getLogger("discord").setLevel(logging.INFO)
+logging.getLogger("mafic").setLevel(logging.DEBUG)     # <— noisy but useful
+logging.getLogger("websockets").setLevel(logging.WARNING)
+log = logging.getLogger("arisu")
+
+# ---------- Mafic version warning (name differs across versions) ----------
+try:
+    from mafic.pool import UnsupportedVersionWarning as MaficVersionWarning
+except Exception:
+    try:
+        from mafic.pool import UnknownVersionWarning as MaficVersionWarning
+    except Exception:
+        MaficVersionWarning = Warning
+warnings.filterwarnings("ignore", category=MaficVersionWarning)
+
+# ---------- Env / Token ----------
 load_dotenv(override=True)
-token = os.getenv('Arisu_Token')
+TOKEN = os.getenv("Karma_Token")
 
-if not token:
-    print("Bot token not found !")
-elif token.strip() != token:
+if not TOKEN:
+    print("Bot token not found!")
+elif TOKEN.strip() != TOKEN:
     print("Bot token contains spaces, please remove them.")
 else:
     print("Bot token is valid.")
-    
-#Set Bot commands to / for users interactions
-     
-client = commands.Bot(command_prefix="!",intents=discord.Intents.all())
 
-#Loops a series of statuses aka playing "text..."
+# ---------- Bot / Intents ----------
+intents = discord.Intents.all()
+client = commands.Bot(command_prefix="!", intents=intents)
 
+# ---------- Presence ----------
+# client_statuses = cycle(["I am the tester?...", "master needs my help."])
 client_statuses = cycle(["as a maid","with the server, teehee"])
 
 @tasks.loop(seconds=30)
 async def change_client_status():
-    await client.change_presence(activity=discord.Game(next(client_statuses)))
+    try:
+        await client.change_presence(activity=discord.Game(next(client_statuses)))
+    except Exception:
+        pass
 
+# ---------- Lavalink (Mafic) ----------
+async def ensure_lavalink_node():
+    if not hasattr(client, "lavalink"):
+        client.lavalink = mafic.NodePool(client)
+    # Your remote node (we already opened 2333)
+    await client.lavalink.create_node(
+        host="10.10.10.84",
+        port=2333,
+        password="zerotwo",
+        label="MAIN",
+        # secure=False  # default
+    )
+    log.info("Connected Lavalink node MAIN at 10.10.10.84:2333")
+
+# Forward Discord VOICE_* gateway events to Mafic
+@client.event
+async def on_socket_response(payload):
+    if hasattr(client, "lavalink"):
+        await client.lavalink.on_socket_response(payload)
+
+# ---------- Events ----------
 @client.event
 async def on_ready():
-    print ("Bot is ready")
+    log.info("Bot is ready")
     change_client_status.start()
+    await ensure_lavalink_node()
     try:
-        synced_commands = await client.tree.sync()
-        print(f"Synced {len(synced_commands)} commands.")
+        synced = await client.tree.sync()
+        log.info("Synced %d commands.", len(synced))
     except Exception as e:
-        print("An error with syncing application commands has occurred: ", e)
-        
+        log.exception("Slash sync failed: %s", e)
+
 @client.event
-async def on_guild_join(guild):
-    conn = sqlite3.connect("servers_info/main.db")
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO Guilds (guild_id) VALUES (?)", (guild.id,))
-    conn.commit()
-    conn.close()
-    
+async def on_command_error(ctx, error):
+    # Surface command errors to console and chat
+    log.exception("Command error in %s: %s", ctx.command, error)
+    try:
+        await ctx.send(f"⚠️ {type(error).__name__}: {error}")
+    except Exception:
+        pass
+
+# quick sanity text & slash
+@client.command()
+async def hello(ctx: commands.Context):
+    await ctx.send(f"Hi, {ctx.author.mention}")
+
+@client.tree.command(name="hello", description="Says Hello back")
+async def hello_slash(interaction: discord.Interaction):
+    await interaction.response.send_message(f"{interaction.user.mention} Hello!", ephemeral=True)
+
+# ---------- SQLite (fixed DELETE syntax) ----------
 @client.event
-async def on_guild_remove(guild):
+async def on_guild_join(guild: discord.Guild):
+    os.makedirs("servers_info", exist_ok=True)
     conn = sqlite3.connect("servers_info/main.db")
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM Guilds WHERE guild_id = ?", (guild.id,))
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS Guilds (guild_id INTEGER PRIMARY KEY)")
+    cur.execute("INSERT OR IGNORE INTO Guilds (guild_id) VALUES (?)", (guild.id,))
     conn.commit()
     conn.close()
 
-@client.tree.command(name="hello", description="Says Hello back") #Snake case naming conventions
-async def hello(interaction: discord.Interaction):
-    await interaction.response.send_message(f"{interaction.user.mention} Hello!", ephemeral = True)
-
-'''
 @client.event
-async def on_guild_join():  #Setup info for new server
-    for guild in client.guilds:
-        filename = guild.name
-        if filename not in os.listdir("./servers_info"): 
-            os.mkdir(f"./servers_info/{filename}")
-        for file_required in requirements:
-            if file_required not in os.listdir(fr"./servers_info/{filename}"): 
-                with open(os.path.join(fr"./servers_info/{filename}", file_required), 'w') as fp:
-                    pass
-'''
-                    
-async def load():
+async def on_guild_remove(guild: discord.Guild):
+    conn = sqlite3.connect("servers_info/main.db")
+    cur = conn.cursor()
+    cur.execute("DELETE FROM Guilds WHERE guild_id = ?", (guild.id,))
+    conn.commit()
+    conn.close()
+
+# ---------- Auto-load cogs ----------
+async def load_cogs():
+    os.makedirs("./cogs", exist_ok=True)
     for filename in os.listdir("./cogs"):
         if filename.endswith(".py"):
             await client.load_extension(f"cogs.{filename[:-3]}")
-            
+            log.info("Loaded cog: cogs.%s", filename[:-3])
+
 async def main():
     async with client:
-        await load()
-        await client.start(token)
+        await load_cogs()
+        await client.start(TOKEN)
 
-@client.command()
-async def hello(ctx):
-    await ctx.send(f"Hi, {ctx.author.mention}")   
-
-'''
-@client.command()
-async def update(ctx):
-    for guild in client.guilds:
-        filename = guild.name
-        if filename not in os.listdir("./servers_info"): 
-            os.mkdir(f"./servers_info/{filename}")
-        for file_required in requirements:
-            sqlite3.connect(f"./servers_info/{filename}/{file_required}.db")
-    await ctx.send(f"Update successful")
-'''
-
-
-    
-
-#Initialize Bot
-
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
