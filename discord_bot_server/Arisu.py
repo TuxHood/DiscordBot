@@ -32,7 +32,7 @@ warnings.filterwarnings("ignore", category=MaficVersionWarning)
 
 # ---------- Env / Token ----------
 load_dotenv(override=True)
-TOKEN = os.getenv("Karma_Token")
+TOKEN = os.getenv("Arisu_Token")
 
 if not TOKEN:
     print("Bot token not found!")
@@ -140,3 +140,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
