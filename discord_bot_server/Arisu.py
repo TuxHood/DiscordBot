@@ -62,7 +62,7 @@ async def ensure_lavalink_node():
         client.lavalink = mafic.NodePool(client)
     # Your remote node (we already opened 2333)
     await client.lavalink.create_node(
-        host="10.10.10.84",
+        host="127.0.0.1",
         port=2333,
         password="zerotwo",
         label="MAIN",
@@ -140,4 +140,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
 
