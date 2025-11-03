@@ -4,8 +4,8 @@ import discord
 from discord.ext import commands
 
 # Config via env (override these if you want)
-N8N_ZERO_TWO_WEBHOOK   = os.getenv("N8N_ZERO_TWO_WEBHOOK", "http://10.10.10.113:5678/webhook/zero-two")
-N8N_VOICE_STATE_WEBHOOK = os.getenv("N8N_VOICE_STATE_WEBHOOK", "http://10.10.10.113:5678/webhook/zero-two-voice")
+N8N_ZERO_TWO_WEBHOOK   = os.getenv("N8N_ZERO_TWO_WEBHOOK", "http://10.10.10.138:5678/webhook/zero-two")
+N8N_VOICE_STATE_WEBHOOK = os.getenv("N8N_VOICE_STATE_WEBHOOK", "http://10.10.10.138:5678/webhook/zero-two-voice")
 
 class ZeroTwoCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -106,3 +106,4 @@ class ZeroTwoCog(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ZeroTwoCog(bot))
+
