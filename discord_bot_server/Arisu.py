@@ -97,6 +97,36 @@ async def on_command_error(ctx, error):
     except Exception:
         pass
 
+@client.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    # Mention-based trigger for Zero Two (no prefix required)
+    if client.user and message.mentions and client.user in message.mentions:
+        content = message.content
+        bot_id = client.user.id
+        content = content.replace(f"<@{bot_id}>", "").replace(f"<@!{bot_id}>", "").strip()
+
+        # Optional friendly prefix cleanup: "| Zero Two's proxy"
+        if content.startswith("|"):
+            content = content[1:].lstrip()
+        lowered = content.lower()
+        if lowered.startswith("zero two's proxy"):
+            content = content[len("zero two's proxy"):].lstrip(" -:|\t")
+
+        if content:
+            zero_two = client.get_cog("ZeroTwoCog")
+            if zero_two:
+                ctx = await client.get_context(message)
+                try:
+                    async with message.channel.typing():
+                        await zero_two.ask_zero_two(ctx, message=content)
+                except Exception as e:
+                    log.exception("ZeroTwo mention trigger failed: %s", e)
+
+    await client.process_commands(message)
+
 # quick sanity text & slash
 @client.command()
 async def hello(ctx: commands.Context):

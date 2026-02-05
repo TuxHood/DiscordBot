@@ -81,7 +81,6 @@ class ZeroTwoCog(commands.Cog):
             }
         }
 
-        reply = "✅ Sent to Zero Two."
         try:
             s = await self._session()
             async with s.post(N8N_ZERO_TWO_WEBHOOK, json=payload, timeout=20) as r:
@@ -92,17 +91,13 @@ class ZeroTwoCog(commands.Cog):
                         if data.get("spoken"):
                             await ctx.message.add_reaction("🗣️")
                         if data.get("reply"):
-                            reply = data["reply"]
+                            await ctx.send(data["reply"])
                     except Exception:
                         text = await r.text()
                         if text.strip():
-                            reply = text[:1900]
-                else:
-                    reply = f"⚠️ Zero Two webhook error: HTTP {r.status}"
-        except Exception as e:
-            reply = f"⚠️ Failed to reach Zero Two: {e}"
-
-        await ctx.send(reply)
+                            await ctx.send(text[:1900])
+        except Exception:
+            pass
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ZeroTwoCog(bot))
