@@ -68,7 +68,7 @@ async def ensure_lavalink_node():
         label="MAIN",
         # secure=False  # default
     )
-    log.info("Connected Lavalink node MAIN at 10.10.10.84:2333")
+    log.info("Connected Lavalink node MAIN at 10.22.22.135:2333")
 
 # Forward Discord VOICE_* gateway events to Mafic
 @client.event
