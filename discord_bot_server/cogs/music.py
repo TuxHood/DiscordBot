@@ -64,6 +64,17 @@ class Music(commands.Cog):
             self.queues[guild_id] = asyncio.Queue()
         return self.queues[guild_id]
 
+    async def wait_for_player_connected(self, player: mafic.Player, timeout: float = 10.0) -> None:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+
+        while loop.time() < deadline:
+            if getattr(player, "connected", False):
+                return
+            await asyncio.sleep(0.1)
+
+        raise commands.CommandError("Voice connection timed out before the player finished connecting.")
+
     async def ensure_player(self, ctx: commands.Context) -> mafic.Player:
         """Ensure a voice connection + Mafic Player for this guild."""
         if not isinstance(ctx.author, discord.Member):
@@ -72,14 +83,22 @@ class Music(commands.Cog):
             await ctx.send("You must join a voice channel first.")
             raise commands.CommandError("Author not in a voice channel.")
 
+        target_channel = ctx.author.voice.channel
         player = ctx.voice_client
         if player and isinstance(player, mafic.Player):
-            return player
+            current_channel = getattr(player, "channel", None)
 
-        log.info("Connecting to voice channel %s in guild %s", ctx.author.voice.channel, ctx.guild.id)
-        player = await ctx.author.voice.channel.connect(cls=mafic.Player)
-        # tiny pause helps first-play vs voice handshake
-        await asyncio.sleep(0.3)
+            if current_channel and current_channel.id != target_channel.id:
+                await player.disconnect(force=True)
+                player = None
+            else:
+                if not getattr(player, "connected", False):
+                    await self.wait_for_player_connected(player)
+                return player
+
+        log.info("Connecting to voice channel %s in guild %s", target_channel, ctx.guild.id)
+        player = await target_channel.connect(cls=mafic.Player)
+        await self.wait_for_player_connected(player)
         return player
 
     # ---------- Background: auto play next ----------
@@ -165,8 +184,12 @@ class Music(commands.Cog):
             return
 
         if not player_is_playing(player):
-            await asyncio.sleep(0.5)  # helps if join+play race
-            await player.play(track)
+            try:
+                await player.play(track)
+            except mafic.PlayerNotConnected:
+                await self.wait_for_player_connected(player)
+                await player.play(track)
+
             title = getattr(track, "title", "unknown")
             log.info("Now playing in guild %s: %s", ctx.guild.id, title)
             await ctx.send(f"▶️ Now playing: **{title}**")
