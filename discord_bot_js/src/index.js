@@ -28,7 +28,17 @@ const client = new Client({
   ]
 });
 
-const voiceManager = new VoiceManager({ client, logger, defaultVolume: config.defaultVolume });
+const voiceManager = new VoiceManager({
+  client,
+  logger,
+  defaultVolume: config.defaultVolume,
+  lavalink: {
+    host: config.lavalinkHost,
+    port: config.lavalinkPort,
+    password: config.lavalinkPassword,
+    secure: config.lavalinkSecure
+  }
+});
 
 client.once('clientReady', () => {
   logger.info({ user: client.user ? client.user.tag : 'unknown' }, 'Discord client is ready');

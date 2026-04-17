@@ -5,7 +5,7 @@ The current deployment path is the Node.js bot in [discord_bot_js/](discord_bot_
 ## Requirements
 
 - Node.js 22.12 or newer
-- FFmpeg available on the host system
+- A reachable Lavalink server endpoint
 
 ## Setup
 
@@ -27,7 +27,12 @@ The current deployment path is the Node.js bot in [discord_bot_js/](discord_bot_
    cp .env.example .env
    ```
 
-4. Fill in `DISCORD_TOKEN` and `API_TOKEN` in `.env`.
+4. Fill in `DISCORD_TOKEN`, `API_TOKEN`, and Lavalink settings in `.env`:
+
+   - `LAVALINK_HOST`
+   - `LAVALINK_PORT`
+   - `LAVALINK_PASSWORD`
+   - `LAVALINK_SECURE` (optional, defaults to `false`)
 
 5. Start the bot:
 
@@ -58,6 +63,7 @@ Endpoints:
 ## Notes
 
 - The bot code lives in [discord_bot_js/src](discord_bot_js/src).
+- Music playback is Lavalink-driven (source loading and streaming are handled by Lavalink).
 - `discord_bot_js/update.sh` is provided for systemd-style restart/update workflows.
 
 

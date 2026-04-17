@@ -1,50 +1,99 @@
-const { AudioPlayerStatus, createAudioPlayer } = require('@discordjs/voice');
-
 const { TrackQueue } = require('./queue');
-const { createTrackResource } = require('./extractor');
 
 class GuildPlayer {
   constructor(options) {
     this.guildId = options.guildId;
     this.logger = options.logger;
-    this.defaultVolume = options.defaultVolume;
 
     this.queue = new TrackQueue();
-    this.audioPlayer = createAudioPlayer();
-    this.connection = null;
+    this.player = null;
     this.currentTrack = null;
     this.advancing = false;
+    this.stopRequested = false;
+    this.boundEvents = {
+      start: this.onTrackStart.bind(this),
+      end: this.onTrackEnd.bind(this),
+      exception: this.onTrackException.bind(this),
+      stuck: this.onTrackStuck.bind(this)
+    };
 
-    this.audioPlayer.on(AudioPlayerStatus.Idle, () => {
-      this.currentTrack = null;
+    if (options.player) {
+      this.setPlayer(options.player);
+    }
+  }
+
+  setPlayer(player) {
+    if (!player) {
+      return;
+    }
+
+    if (this.player === player) {
+      return;
+    }
+
+    if (this.player) {
+      this.player.off('start', this.boundEvents.start);
+      this.player.off('end', this.boundEvents.end);
+      this.player.off('exception', this.boundEvents.exception);
+      this.player.off('stuck', this.boundEvents.stuck);
+    }
+
+    this.player = player;
+    this.player.on('start', this.boundEvents.start);
+    this.player.on('end', this.boundEvents.end);
+    this.player.on('exception', this.boundEvents.exception);
+    this.player.on('stuck', this.boundEvents.stuck);
+  }
+
+  onTrackStart() {
+    if (!this.currentTrack) {
+      return;
+    }
+
+    this.logger.info({ guildId: this.guildId, title: this.currentTrack.title }, 'Track started');
+  }
+
+  onTrackEnd(reason) {
+    const endedReason = reason && reason.reason ? reason.reason : 'unknown';
+    this.currentTrack = null;
+
+    if (this.stopRequested && endedReason === 'stopped') {
+      this.stopRequested = false;
+      return;
+    }
+
+    if (
+      endedReason === 'finished' ||
+      endedReason === 'loadFailed' ||
+      endedReason === 'cleanup' ||
+      endedReason === 'stopped'
+    ) {
       this.playNext().catch((err) => {
-        this.logger.error({ err, guildId: this.guildId }, 'Failed to play next track on idle');
+        this.logger.error({ err, guildId: this.guildId }, 'Failed to play next Lavalink track on end event');
       });
-    });
+    }
+  }
 
-    this.audioPlayer.on('error', (err) => {
-      this.logger.error({ err, guildId: this.guildId }, 'Audio player error');
-      this.currentTrack = null;
-      this.playNext().catch((nextErr) => {
-        this.logger.error({ err: nextErr, guildId: this.guildId }, 'Failed to recover after audio player error');
-      });
+  onTrackException(data) {
+    this.logger.error({ guildId: this.guildId, exception: data && data.exception ? data.exception : data }, 'Lavalink track exception');
+    this.currentTrack = null;
+    this.playNext().catch((err) => {
+      this.logger.error({ err, guildId: this.guildId }, 'Failed to recover after Lavalink track exception');
     });
   }
 
-  setConnection(connection) {
-    this.connection = connection;
-    connection.subscribe(this.audioPlayer);
-  }
-
-  clearConnection() {
-    this.connection = null;
+  onTrackStuck(data) {
+    this.logger.error({ guildId: this.guildId, data }, 'Lavalink track stuck');
+    this.currentTrack = null;
+    this.playNext().catch((err) => {
+      this.logger.error({ err, guildId: this.guildId }, 'Failed to recover after Lavalink track stuck event');
+    });
   }
 
   async enqueue(track) {
     const position = this.queue.enqueue(track);
-    const status = this.audioPlayer.state.status;
 
-    if (status !== AudioPlayerStatus.Playing && status !== AudioPlayerStatus.Paused && !this.currentTrack) {
+    if (!this.currentTrack && !this.advancing) {
       await this.playNext();
       return {
         started: true,
@@ -63,8 +112,8 @@ class GuildPlayer {
       return false;
     }
 
-    if (!this.connection) {
-      this.logger.warn({ guildId: this.guildId }, 'playNext called without connection');
+    if (!this.player) {
+      this.logger.warn({ guildId: this.guildId }, 'playNext called without Lavalink player');
       return false;
     }
 
@@ -79,40 +128,71 @@ class GuildPlayer {
         return false;
       }
 
-      const resource = createTrackResource(nextTrack, {
-        logger: this.logger,
-        defaultVolume: this.defaultVolume
-      });
+      if (!nextTrack.encoded) {
+        throw new Error('Track is missing Lavalink encoded value');
+      }
+
+      this.stopRequested = false;
       this.currentTrack = nextTrack;
-      this.audioPlayer.play(resource);
-      this.logger.info({ guildId: this.guildId, title: nextTrack.title }, 'Started playback');
+      await this.player.playTrack({ track: { encoded: nextTrack.encoded } });
       return true;
+    } catch (err) {
+      this.logger.error({ err, guildId: this.guildId }, 'Failed to start Lavalink playback');
+      this.currentTrack = null;
+      return false;
     } finally {
       this.advancing = false;
     }
   }
 
-  pause() {
-    return this.audioPlayer.pause();
+  async pause() {
+    if (!this.player || !this.currentTrack) {
+      return false;
+    }
+
+    await this.player.setPaused(true);
+    return true;
   }
 
-  resume() {
-    return this.audioPlayer.unpause();
+  async resume() {
+    if (!this.player || !this.currentTrack) {
+      return false;
+    }
+
+    await this.player.setPaused(false);
+    return true;
   }
 
-  skip() {
-    return this.audioPlayer.stop(true);
+  async skip() {
+    if (!this.player || !this.currentTrack) {
+      return false;
+    }
+
+    await this.player.stopTrack();
+    return true;
   }
 
-  stop() {
+  async stop() {
     this.queue.clear();
+    if (!this.player || !this.currentTrack) {
+      this.currentTrack = null;
+      return;
+    }
+
+    this.stopRequested = true;
+    await this.player.stopTrack();
     this.currentTrack = null;
-    this.audioPlayer.stop(true);
   }
 
-  destroy() {
-    this.stop();
-    this.audioPlayer.removeAllListeners();
+  async destroy() {
+    await this.stop();
+    if (this.player) {
+      this.player.off('start', this.boundEvents.start);
+      this.player.off('end', this.boundEvents.end);
+      this.player.off('exception', this.boundEvents.exception);
+      this.player.off('stuck', this.boundEvents.stuck);
+      this.player = null;
+    }
   }
 
   getSnapshot() {
