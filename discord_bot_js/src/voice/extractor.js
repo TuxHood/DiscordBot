@@ -1,5 +1,5 @@
 const prism = require('prism-media');
-const ytdl = require('ytdl-core');
+const ytdl = require('@distube/ytdl-core');
 const ytSearch = require('yt-search');
 const { createAudioResource, StreamType } = require('@discordjs/voice');
 
