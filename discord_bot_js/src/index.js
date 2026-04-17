@@ -30,7 +30,7 @@ const client = new Client({
 
 const voiceManager = new VoiceManager({ client, logger, defaultVolume: config.defaultVolume });
 
-client.once('ready', () => {
+client.once('clientReady', () => {
   logger.info({ user: client.user ? client.user.tag : 'unknown' }, 'Discord client is ready');
 });
 

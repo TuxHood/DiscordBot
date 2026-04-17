@@ -1,53 +1,63 @@
 # Discord Bot
 
-This repository contains **Arisu**, a Discord bot implemented with `discord.py`.
+The current deployment path is the Node.js bot in [discord_bot_js/](discord_bot_js). The Python bot remains in the repository for reference, but it is not the active runtime.
+
+## Requirements
+
+- Node.js 22.12 or newer
+- FFmpeg available on the host system
 
 ## Setup
 
-1. **Install Python and create a virtual environment**
+1. Change into the bot directory:
 
    ```bash
-   python3 -m venv venv
-   source venv/bin/activate
+   cd discord_bot_js
    ```
 
-   Then install the required packages:
+2. Install dependencies:
 
    ```bash
-   pip install -r discord_bot_server/requirements.txt
+   npm install
    ```
 
-2. **Install FFmpeg**
-
-   FFmpeg is required for music playback. On Debian-based systems you can install it with:
+3. Copy the example environment file:
 
    ```bash
-   sudo apt install ffmpeg
+   cp .env.example .env
    ```
 
-3. **Configure the bot token**
+4. Fill in `DISCORD_TOKEN` and `API_TOKEN` in `.env`.
 
-   Create a file named `.env` in the repository root and add your Discord bot token:
+5. Start the bot:
 
-   ```env
-   Arisu_Token=YOUR_TOKEN_HERE
+   ```bash
+   npm start
    ```
 
-## Running the Bot
+`N8N_WEBHOOK_URL` is optional and only used for mention forwarding.
 
-Use the provided script to update dependencies and launch the bot:
+## Local API
+
+The HTTP API listens on `HTTP_HOST:HTTP_PORT` and protects `/api/music/*` with the `x-api-token` header.
 
 ```bash
-bash discord_bot_server/update.sh
+x-api-token: your API_TOKEN value
 ```
 
-## Features (Cogs)
+Endpoints:
 
-The bot's functionality is organized into cogs located in `discord_bot_server/cogs`:
+- `GET /api/health`
+- `POST /api/music/play`
+- `POST /api/music/pause`
+- `POST /api/music/resume`
+- `POST /api/music/skip`
+- `POST /api/music/stop`
+- `GET /api/music/queue`
 
-- **music** – Play audio from YouTube links or searches. Supports queueing, skip, pause, resume and more.
-- **autorole** – Automatically assigns a predefined role to members when they join a server.
-- **reactionroles** – Allows administrators to assign or remove roles based on message reactions.
-- **test** – Provides a simple `!goodnight` command.
+## Notes
+
+- The bot code lives in [discord_bot_js/src](discord_bot_js/src).
+- `discord_bot_js/update.sh` is provided for systemd-style restart/update workflows.
 
 

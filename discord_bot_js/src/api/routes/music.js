@@ -33,12 +33,22 @@ function createMusicRouter(options) {
   const voiceManager = options.voiceManager;
   const logger = options.logger;
 
+  function pickValue(source, keys) {
+    for (const key of keys) {
+      if (source[key] !== undefined && source[key] !== null && source[key] !== '') {
+        return source[key];
+      }
+    }
+
+    return null;
+  }
+
   router.post('/play', async (req, res) => {
     try {
-      const guildId = req.body.guildId;
+      const guildId = pickValue(req.body, ['guildId', 'guild_id']);
       const query = req.body.query;
-      const channelId = req.body.channelId || null;
-      const requestedBy = req.body.requestedBy || 'api';
+      const channelId = pickValue(req.body, ['channelId', 'channel_id', 'voice_channel_id']);
+      const requestedBy = pickValue(req.body, ['requestedBy', 'requested_by']) || 'api';
 
       if (!guildId || !query) {
         res.status(400).json({ error: 'guildId and query are required' });
@@ -70,7 +80,7 @@ function createMusicRouter(options) {
 
   router.post('/pause', async (req, res) => {
     try {
-      const guildId = req.body.guildId;
+      const guildId = pickValue(req.body, ['guildId', 'guild_id']);
       if (!guildId) {
         res.status(400).json({ error: 'guildId is required' });
         return;
@@ -86,7 +96,7 @@ function createMusicRouter(options) {
 
   router.post('/resume', async (req, res) => {
     try {
-      const guildId = req.body.guildId;
+      const guildId = pickValue(req.body, ['guildId', 'guild_id']);
       if (!guildId) {
         res.status(400).json({ error: 'guildId is required' });
         return;
@@ -102,7 +112,7 @@ function createMusicRouter(options) {
 
   router.post('/skip', async (req, res) => {
     try {
-      const guildId = req.body.guildId;
+      const guildId = pickValue(req.body, ['guildId', 'guild_id']);
       if (!guildId) {
         res.status(400).json({ error: 'guildId is required' });
         return;
@@ -118,7 +128,7 @@ function createMusicRouter(options) {
 
   router.post('/stop', async (req, res) => {
     try {
-      const guildId = req.body.guildId;
+      const guildId = pickValue(req.body, ['guildId', 'guild_id']);
       if (!guildId) {
         res.status(400).json({ error: 'guildId is required' });
         return;
@@ -134,7 +144,7 @@ function createMusicRouter(options) {
 
   router.get('/queue', async (req, res) => {
     try {
-      const guildId = req.query.guildId;
+      const guildId = pickValue(req.query, ['guildId', 'guild_id']);
       if (!guildId) {
         res.status(400).json({ error: 'guildId is required' });
         return;
