@@ -126,7 +126,7 @@ class VoiceManager {
       player.setConnection(existingConnection);
     }
 
-    const track = await resolveTrack(query, requestedBy);
+    const track = await resolveTrack(query, requestedBy, this.logger);
     const enqueueResult = await player.enqueue(track);
 
     return {
