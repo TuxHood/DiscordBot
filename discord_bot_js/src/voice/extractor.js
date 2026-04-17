@@ -3,20 +3,28 @@ const ytdl = require('@distube/ytdl-core');
 const ytSearch = require('yt-search');
 const { createAudioResource, StreamType } = require('@discordjs/voice');
 
-function hasPlayableAudioFormat(info) {
+function hasUsableFormatUrl(format) {
+  return Boolean(format && typeof format.url === 'string' && format.url.length > 0);
+}
+
+function choosePlayableFormat(info) {
   if (!info || !Array.isArray(info.formats) || info.formats.length === 0) {
-    return false;
+    return null;
   }
 
-  try {
-    ytdl.chooseFormat(info.formats, {
-      quality: 'highestaudio',
-      filter: 'audioonly'
-    });
-    return true;
-  } catch (err) {
-    return false;
+  const audioOnly = info.formats.find((format) => {
+    return Boolean(format && format.hasAudio && !format.hasVideo && hasUsableFormatUrl(format));
+  });
+
+  if (audioOnly) {
+    return audioOnly;
   }
+
+  const audioCapable = info.formats.find((format) => {
+    return Boolean(format && format.hasAudio && hasUsableFormatUrl(format));
+  });
+
+  return audioCapable || null;
 }
 
 function logSkippedCandidate(logger, candidate, reason) {
@@ -32,31 +40,29 @@ function logSkippedCandidate(logger, candidate, reason) {
 
   if (typeof logger.debug === 'function') {
     logger.debug(details, 'Skipping unplayable search candidate');
-    return;
-  }
-
-  if (typeof logger.warn === 'function') {
-    logger.warn(details, 'Skipping unplayable search candidate');
   }
 }
 
-function mapTrackFromInfo(info, fallbackUrl, requestedBy) {
+function mapTrackFromInfo(info, format, fallbackUrl, requestedBy) {
   return {
     title: info.videoDetails.title,
     url: info.videoDetails.video_url || fallbackUrl,
     durationSec: Number.parseInt(info.videoDetails.lengthSeconds || '0', 10),
-    requestedBy: requestedBy || 'unknown'
+    requestedBy: requestedBy || 'unknown',
+    info,
+    format
   };
 }
 
 async function resolveTrack(query, requestedBy, logger) {
   if (ytdl.validateURL(query)) {
     const info = await ytdl.getInfo(query);
-    if (!hasPlayableAudioFormat(info)) {
+    const format = choosePlayableFormat(info);
+    if (!format) {
       throw new Error('Track has no playable audio formats');
     }
 
-    return mapTrackFromInfo(info, query, requestedBy);
+    return mapTrackFromInfo(info, format, query, requestedBy);
   }
 
   const searchResult = await ytSearch(query);
@@ -71,12 +77,13 @@ async function resolveTrack(query, requestedBy, logger) {
   for (const video of videos) {
     try {
       const info = await ytdl.getInfo(video.url);
-      if (!hasPlayableAudioFormat(info)) {
+      const format = choosePlayableFormat(info);
+      if (!format) {
         logSkippedCandidate(logger, video, 'No playable audio formats');
         continue;
       }
 
-      return mapTrackFromInfo(info, video.url, requestedBy);
+      return mapTrackFromInfo(info, format, video.url, requestedBy);
     } catch (err) {
       logSkippedCandidate(logger, video, err && err.message ? err.message : 'Failed to load video info');
     }
@@ -89,9 +96,12 @@ function createTrackResource(track, options) {
   const logger = options.logger;
   const volume = options.defaultVolume;
 
-  const source = ytdl(track.url, {
-    quality: 'highestaudio',
-    filter: 'audioonly',
+  if (!track.info || !track.format) {
+    throw new Error('Track is missing resolved stream format');
+  }
+
+  const source = ytdl.downloadFromInfo(track.info, {
+    format: track.format,
     highWaterMark: 1 << 25,
     dlChunkSize: 0
   });
@@ -136,7 +146,7 @@ function createTrackResource(track, options) {
 }
 
 module.exports = {
-  hasPlayableAudioFormat,
+  choosePlayableFormat,
   resolveTrack,
   createTrackResource
 };
