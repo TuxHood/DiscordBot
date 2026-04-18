@@ -67,7 +67,7 @@ class VoiceManager {
       guildId: guild.id,
       shardId,
       channelId: voiceChannel.id,
-      deaf: true
+      deaf: false
     });
 
     const player = this.getOrCreatePlayer(guild.id, lavalinkPlayer);
