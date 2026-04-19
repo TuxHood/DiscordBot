@@ -1,6 +1,7 @@
 const express = require('express');
 
 const { createMusicRouter } = require('./routes/music');
+const { createMessageRouter } = require('./routes/message');
 
 function authMiddleware(apiToken) {
   return (req, res, next) => {
@@ -29,6 +30,11 @@ async function startApiServer(options) {
     client: options.client,
     voiceManager: options.voiceManager,
     logger: logger.child({ scope: 'api.music' })
+  }));
+
+  app.use('/api/message', authMiddleware(config.apiToken), createMessageRouter({
+    client: options.client,
+    logger: logger.child({ scope: 'api.message' })
   }));
 
   app.use((err, req, res, next) => {
