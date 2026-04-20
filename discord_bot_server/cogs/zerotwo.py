@@ -59,7 +59,7 @@ class ZeroTwoCog(commands.Cog):
     # --- Your existing command, now VC-aware and non-blocking ---
     @commands.command(name="ask")
     async def ask_zero_two(self, ctx: commands.Context, *, message: str):
-        """Ask Zero Two. If she's in VC, n8n will TTS via Lavalink; else, it returns text."""
+        """Ask Zero Two by triggering n8n. n8n handles Discord replies directly."""
         guild_id = str(ctx.guild.id) if ctx.guild else "DM"
         connected, bot_channel_id = self._is_connected(ctx.guild)
 
@@ -84,20 +84,16 @@ class ZeroTwoCog(commands.Cog):
         try:
             s = await self._session()
             async with s.post(N8N_ZERO_TWO_WEBHOOK, json=payload, timeout=20) as r:
-                if r.status == 200:
-                    # If your n8n flow returns JSON, use it (optional)
-                    try:
-                        data = await r.json(content_type=None)
-                        if data.get("spoken"):
-                            await ctx.message.add_reaction("🗣️")
-                        if data.get("reply"):
-                            await ctx.send(data["reply"])
-                    except Exception:
-                        text = await r.text()
-                        if text.strip():
-                            await ctx.send(text[:1900])
-        except Exception:
-            pass
+                if r.status < 200 or r.status >= 300:
+                    err_text = await r.text()
+                    err_text = err_text.strip()
+                    if len(err_text) > 500:
+                        err_text = err_text[:500] + "..."
+                    raise RuntimeError(f"n8n request failed ({r.status}): {err_text or '<empty body>'}")
+                # n8n is configured as noData/lastNode and posts to Discord itself.
+                # Do not parse response content or send a second Discord reply here.
+        except Exception as e:
+            print(f"[ask] {e}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ZeroTwoCog(bot))
