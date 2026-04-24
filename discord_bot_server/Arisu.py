@@ -157,11 +157,21 @@ async def on_guild_remove(guild: discord.Guild):
 
 # ---------- Auto-load cogs ----------
 async def load_cogs():
-    os.makedirs("./cogs", exist_ok=True)
-    for filename in os.listdir("./cogs"):
-        if filename.endswith(".py"):
-            await client.load_extension(f"cogs.{filename[:-3]}")
-            log.info("Loaded cog: cogs.%s", filename[:-3])
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    cogs_dir = os.path.join(base_dir, "cogs")
+    os.makedirs(cogs_dir, exist_ok=True)
+
+    log.info("Loading cogs from %s", cogs_dir)
+    for filename in sorted(os.listdir(cogs_dir)):
+        if not filename.endswith(".py"):
+            continue
+
+        extension = f"cogs.{filename[:-3]}"
+        try:
+            await client.load_extension(extension)
+            log.info("Loaded cog: %s", extension)
+        except Exception as e:
+            log.exception("Failed to load cog %s: %s", extension, e)
 
 async def main():
     async with client:

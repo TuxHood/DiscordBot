@@ -25,6 +25,10 @@ class LangGraphTestCog(commands.Cog):
         if self.http and not self.http.closed:
             self.bot.loop.create_task(self.http.close())
 
+    @commands.Cog.listener()
+    async def on_ready(self):
+        log.info("LangGraphTestCog is online")
+
     def _build_payload(self, ctx: commands.Context, message_text: str) -> Dict[str, Any]:
         guild_id = str(ctx.guild.id) if ctx.guild else None
         channel_id = str(ctx.channel.id)
