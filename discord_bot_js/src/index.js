@@ -5,6 +5,7 @@ const { config } = require('./config');
 const { VoiceManager } = require('./voice/voiceManager');
 const { startApiServer } = require('./api/server');
 const { registerN8nMentionForwarding } = require('./integrations/n8n');
+const { sendTestPayloadToLangGraph } = require('./integrations/langgraph');
 
 const logger = pino({
   level: config.logLevel,
@@ -68,6 +69,63 @@ client.on('messageCreate', async (message) => {
   try {
     if (command === 'hello') {
       await message.reply('Hello from the Node.js bot.');
+      return;
+    }
+
+    if (command === 'test') {
+      const testMessage = parts.join(' ').trim();
+      if (!testMessage) {
+        await message.reply('Usage: !test <message>');
+        return;
+      }
+
+      const payload = {
+        event: {
+          source: 'discord',
+          source_user_id: message.author.id,
+          source_message_id: message.id,
+          guild_id: message.guild ? message.guild.id : null,
+          channel_id: message.channel.id,
+          timestamp: message.createdAt.toISOString(),
+          text: testMessage,
+          message_mode: 'test',
+          test_metadata: {
+            original_message: message.content,
+            command: config.prefix + 'test',
+            payload: testMessage,
+            purpose: 'discord_langgraph_bridge_test'
+          }
+        }
+      };
+
+      logger.info(
+        {
+          command,
+          guildId: message.guild ? message.guild.id : null,
+          channelId: message.channel.id,
+          userId: message.author.id,
+          messageId: message.id
+        },
+        'LangGraph test command received'
+      );
+
+      const result = await sendTestPayloadToLangGraph({
+        config,
+        logger,
+        payload
+      });
+
+      if (!result.ok) {
+        logger.error(
+          { command, guildId: message.guild.id, error: result.error, status: result.status },
+          'LangGraph test command failed'
+        );
+        await message.reply('LangGraph test failed. Check bot logs.');
+        return;
+      }
+
+      const replyText = (result.replyText || '').trim() || 'LangGraph returned an empty response.';
+      await message.reply(replyText.length > 2000 ? replyText.slice(0, 1997) + '...' : replyText);
       return;
     }
 
@@ -165,7 +223,7 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
-    await message.reply('Unknown command. Available: !hello !join !leave !play !pause !resume !skip !stop !queue');
+    await message.reply('Unknown command. Available: !hello !test !join !leave !play !pause !resume !skip !stop !queue');
   } catch (err) {
     logger.error({ err, command, guildId: message.guild.id }, 'Command failed');
     await message.reply('Command failed: ' + (err && err.message ? err.message : 'Unknown error'));

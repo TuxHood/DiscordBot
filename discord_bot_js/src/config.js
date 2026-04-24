@@ -54,11 +54,19 @@ const config = {
   lavalinkSecure: parseBoolOrDefault(process.env.LAVALINK_SECURE, false),
   n8nWebhookUrl: process.env.N8N_WEBHOOK_URL || '',
   n8nTimeoutMs: parseIntOrDefault(process.env.N8N_TIMEOUT_MS, 10000),
+  langGraphBaseUrl: process.env.LANGGRAPH_BASE_URL || 'http://127.0.0.1:8000',
+  langGraphTestEndpoint: process.env.LANGGRAPH_TEST_ENDPOINT || '/invoke',
+  langGraphApiKey: process.env.LANGGRAPH_API_KEY || '',
+  langGraphTimeoutMs: parseIntOrDefault(process.env.LANGGRAPH_TIMEOUT_MS, 20000),
   defaultVolume: Number.parseFloat(process.env.DEFAULT_VOLUME || '0.5')
 };
 
 if (Number.isNaN(config.defaultVolume) || config.defaultVolume <= 0 || config.defaultVolume > 2) {
   throw new Error('DEFAULT_VOLUME must be a number > 0 and <= 2');
+}
+
+if (Number.isNaN(config.langGraphTimeoutMs) || config.langGraphTimeoutMs < 1000) {
+  throw new Error('LANGGRAPH_TIMEOUT_MS must be a number >= 1000');
 }
 
 module.exports = {
