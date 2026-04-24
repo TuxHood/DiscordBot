@@ -4,3 +4,4 @@ PyNaCl
 requests
 mafic
 aiohttp
+python-dotenv
