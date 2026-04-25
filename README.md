@@ -47,6 +47,12 @@ The active Node.js bot supports LangGraph ingress in two modes:
 - Test mode command: `!test <message>`
 - Conversational mode: mention the bot (for example `@ZeroTwo help`) or reply to one of the bot's messages
 
+Conversational ingress now also sends lightweight context to LangGraph:
+
+- Up to 3 recent prior messages from the same user in the same channel
+- Up to 3 recent prior messages from the bot in the same channel
+- Replied-to message metadata and content when the current message is a reply (including replying to other users while mentioning the bot)
+
 LangGraph environment variables used by these flows:
 
 - `LANGGRAPH_BASE_URL` - base URL for the LangGraph service, such as `http://127.0.0.1:8000`

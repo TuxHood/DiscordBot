@@ -17,6 +17,106 @@ function stripBotMentionText(content, botUserId) {
     .trim();
 }
 
+function isUsefulContextContent(content, commandPrefix) {
+  const trimmed = String(content || '').trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (commandPrefix && trimmed.startsWith(commandPrefix)) {
+    return false;
+  }
+
+  return true;
+}
+
+function toContextMessage(message) {
+  return {
+    message_id: message.id,
+    author_id: message.author.id,
+    content: String(message.content || '').trim(),
+    timestamp: message.createdAt.toISOString()
+  };
+}
+
+async function getReferencedMessageMetadata(options) {
+  const message = options.message;
+  const logger = options.logger;
+
+  if (!message.reference || !message.reference.messageId) {
+    return null;
+  }
+
+  try {
+    const referenced = await message.fetchReference();
+    if (!referenced) {
+      return null;
+    }
+
+    return {
+      reply_to_message_id: referenced.id,
+      reply_to_author_id: referenced.author ? referenced.author.id : null,
+      reply_to_author_is_bot: Boolean(referenced.author && referenced.author.bot),
+      reply_to_content: String(referenced.content || '').trim()
+    };
+  } catch (err) {
+    logger.debug({ err, messageId: message.id }, 'Unable to fetch referenced message metadata');
+    return null;
+  }
+}
+
+async function collectRecentChannelContext(options) {
+  const message = options.message;
+  const commandPrefix = options.commandPrefix;
+  const userId = options.userId;
+  const botUserId = options.botUserId;
+  const logger = options.logger;
+  const maxPerType = options.maxPerType || 3;
+
+  const recentContext = {
+    user_messages: [],
+    bot_messages: []
+  };
+
+  try {
+    const history = await message.channel.messages.fetch({ limit: 40 });
+
+    for (const candidate of history.values()) {
+      if (candidate.id === message.id) {
+        continue;
+      }
+
+      if (!isUsefulContextContent(candidate.content, commandPrefix)) {
+        continue;
+      }
+
+      if (candidate.author && candidate.author.id === userId) {
+        if (recentContext.user_messages.length < maxPerType) {
+          recentContext.user_messages.push(toContextMessage(candidate));
+        }
+      } else if (candidate.author && candidate.author.id === botUserId) {
+        if (recentContext.bot_messages.length < maxPerType) {
+          recentContext.bot_messages.push(toContextMessage(candidate));
+        }
+      }
+
+      if (
+        recentContext.user_messages.length >= maxPerType
+        && recentContext.bot_messages.length >= maxPerType
+      ) {
+        break;
+      }
+    }
+  } catch (err) {
+    logger.debug({ err, channelId: message.channel.id, messageId: message.id }, 'Failed to collect recent channel context');
+  }
+
+  recentContext.user_messages.reverse();
+  recentContext.bot_messages.reverse();
+
+  return recentContext;
+}
+
 function buildDiscordLangGraphPayload(options) {
   const message = options.message;
   const text = String(options.text || '').trim();
@@ -41,6 +141,10 @@ function buildDiscordLangGraphPayload(options) {
 
   if (options.interactionMetadata) {
     payload.event.interaction_metadata = options.interactionMetadata;
+  }
+
+  if (options.recentContext) {
+    payload.event.recent_context = options.recentContext;
   }
 
   return payload;
@@ -100,7 +204,17 @@ async function sendPayloadToLangGraph(options) {
     headers.authorization = 'Bearer ' + config.langGraphApiKey;
   }
 
-  logger.info({ url, payload }, 'Sending LangGraph payload');
+  logger.info(
+    {
+      url,
+      messageMode: payload && payload.event ? payload.event.message_mode : undefined,
+      trigger: payload && payload.event && payload.event.interaction_metadata
+        ? payload.event.interaction_metadata.trigger
+        : undefined,
+      textLength: payload && payload.event && payload.event.text ? payload.event.text.length : 0
+    },
+    'Sending LangGraph payload'
+  );
 
   let response;
   try {
@@ -161,5 +275,7 @@ module.exports = {
   sendPayloadToLangGraph,
   buildDiscordLangGraphPayload,
   stripBotMentionText,
+  getReferencedMessageMetadata,
+  collectRecentChannelContext,
   sendTestPayloadToLangGraph: sendPayloadToLangGraph
 };

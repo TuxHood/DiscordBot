@@ -8,7 +8,9 @@ const { registerN8nMentionForwarding } = require('./integrations/n8n');
 const {
   sendPayloadToLangGraph,
   buildDiscordLangGraphPayload,
-  stripBotMentionText
+  stripBotMentionText,
+  getReferencedMessageMetadata,
+  collectRecentChannelContext
 } = require('./integrations/langgraph');
 
 const logger = pino({
@@ -52,23 +54,6 @@ client.once('clientReady', () => {
 client.on('error', (err) => {
   logger.error({ err }, 'Discord client error');
 });
-
-async function getReplyToBotMessageId(message) {
-  if (!client.user || !message.reference || !message.reference.messageId) {
-    return null;
-  }
-
-  try {
-    const referenced = await message.fetchReference();
-    if (referenced && referenced.author && referenced.author.id === client.user.id) {
-      return referenced.id;
-    }
-  } catch (err) {
-    logger.debug({ err, messageId: message.id }, 'Unable to fetch referenced message');
-  }
-
-  return null;
-}
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) {
@@ -244,7 +229,10 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  const replyToBotMessageId = await getReplyToBotMessageId(message);
+  const replyMetadata = await getReferencedMessageMetadata({ message, logger });
+  const replyToBotMessageId = replyMetadata && replyMetadata.reply_to_author_is_bot
+    ? replyMetadata.reply_to_message_id
+    : null;
   const wasMentioned = Boolean(client.user && message.mentions.has(client.user));
   let trigger = null;
   let textForLangGraph = '';
@@ -275,8 +263,19 @@ client.on('messageCreate', async (message) => {
     interactionMetadata: {
       trigger,
       original_message: message.content,
-      reply_to_bot_message_id: replyToBotMessageId
-    }
+      reply_to_message_id: replyMetadata ? replyMetadata.reply_to_message_id : null,
+      reply_to_author_id: replyMetadata ? replyMetadata.reply_to_author_id : null,
+      reply_to_author_is_bot: replyMetadata ? replyMetadata.reply_to_author_is_bot : null,
+      reply_to_content: replyMetadata ? replyMetadata.reply_to_content : null
+    },
+    recentContext: await collectRecentChannelContext({
+      message,
+      commandPrefix: config.prefix,
+      userId: message.author.id,
+      botUserId: client.user ? client.user.id : '',
+      maxPerType: 3,
+      logger
+    })
   });
 
   logger.info(
@@ -286,6 +285,9 @@ client.on('messageCreate', async (message) => {
       channelId: message.channel.id,
       userId: message.author.id,
       messageId: message.id,
+      hasReplyContent: Boolean(replyMetadata && replyMetadata.reply_to_content),
+      userContextCount: payload.event.recent_context.user_messages.length,
+      botContextCount: payload.event.recent_context.bot_messages.length,
       replyToBotMessageId
     },
     'LangGraph conversational ingress received'
