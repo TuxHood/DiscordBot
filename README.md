@@ -42,14 +42,17 @@ The current deployment path is the Node.js bot in [discord_bot_js/](discord_bot_
 
 `N8N_WEBHOOK_URL` is optional and only used for mention forwarding.
 
-The Python reference bot in [discord_bot_server/](discord_bot_server) also includes a lightweight LangGraph test bridge command, `!test <message>`, for inspecting Discord payload flow into a LangGraph endpoint.
+The active Node.js bot supports LangGraph ingress in two modes:
 
-LangGraph environment variables used by the test bridge:
+- Test mode command: `!test <message>`
+- Conversational mode: mention the bot (for example `@ZeroTwo help`) or reply to one of the bot's messages
+
+LangGraph environment variables used by these flows:
 
 - `LANGGRAPH_BASE_URL` - base URL for the LangGraph service, such as `http://127.0.0.1:8000`
-- `LANGGRAPH_TEST_ENDPOINT` - path or full URL for the test endpoint, defaulting to `/invoke`
+- `LANGGRAPH_TEST_ENDPOINT` - path or full URL for the LangGraph endpoint, defaulting to `/invoke`
 - `LANGGRAPH_API_KEY` - optional bearer token sent as `Authorization: Bearer ...`
-- `LANGGRAPH_TIMEOUT_SECONDS` - optional request timeout in seconds, defaulting to `20`
+- `LANGGRAPH_TIMEOUT_MS` - optional request timeout in milliseconds, defaulting to `20000`
 
 ## Local API
 

@@ -9,6 +9,43 @@ function buildLangGraphUrl(config) {
   return base + normalizedEndpoint;
 }
 
+function stripBotMentionText(content, botUserId) {
+  const mentionRegex = new RegExp('<@!?' + botUserId + '>', 'g');
+  return String(content || '')
+    .replace(mentionRegex, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildDiscordLangGraphPayload(options) {
+  const message = options.message;
+  const text = String(options.text || '').trim();
+  const messageMode = options.messageMode || 'normal';
+
+  const payload = {
+    event: {
+      source: 'discord',
+      source_user_id: message.author.id,
+      source_message_id: message.id,
+      guild_id: message.guild ? message.guild.id : null,
+      channel_id: message.channel.id,
+      timestamp: message.createdAt.toISOString(),
+      text,
+      message_mode: messageMode
+    }
+  };
+
+  if (options.testMetadata) {
+    payload.event.test_metadata = options.testMetadata;
+  }
+
+  if (options.interactionMetadata) {
+    payload.event.interaction_metadata = options.interactionMetadata;
+  }
+
+  return payload;
+}
+
 function extractReplyFromLangGraphResponse(payload) {
   if (payload === null || payload === undefined) {
     return '';
@@ -49,7 +86,7 @@ function extractReplyFromLangGraphResponse(payload) {
   return String(payload).trim();
 }
 
-async function sendTestPayloadToLangGraph(options) {
+async function sendPayloadToLangGraph(options) {
   const config = options.config;
   const logger = options.logger;
   const payload = options.payload;
@@ -63,7 +100,7 @@ async function sendTestPayloadToLangGraph(options) {
     headers.authorization = 'Bearer ' + config.langGraphApiKey;
   }
 
-  logger.info({ url, payload }, 'Sending LangGraph test payload');
+  logger.info({ url, payload }, 'Sending LangGraph payload');
 
   let response;
   try {
@@ -121,5 +158,8 @@ async function sendTestPayloadToLangGraph(options) {
 }
 
 module.exports = {
-  sendTestPayloadToLangGraph
+  sendPayloadToLangGraph,
+  buildDiscordLangGraphPayload,
+  stripBotMentionText,
+  sendTestPayloadToLangGraph: sendPayloadToLangGraph
 };
