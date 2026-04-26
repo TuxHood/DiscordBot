@@ -17,6 +17,32 @@ function stripBotMentionText(content, botUserId) {
     .trim();
 }
 
+function getNonEmptyString(value) {
+  const normalized = String(value || '').trim();
+  return normalized || '';
+}
+
+function deriveSourceIdentity(message) {
+  const author = message && message.author ? message.author : null;
+  const member = message && message.member ? message.member : null;
+
+  const sourceUserId = getNonEmptyString(author && author.id);
+  const sourceUsername = getNonEmptyString(author && author.username)
+    || getNonEmptyString(author && author.tag)
+    || sourceUserId
+    || 'unknown';
+  const sourceGlobalName = getNonEmptyString(author && author.globalName);
+  const guildDisplayName = getNonEmptyString(member && member.displayName);
+  const sourceDisplayName = guildDisplayName || sourceGlobalName || sourceUsername;
+
+  return {
+    source_user_id: sourceUserId || null,
+    source_username: sourceUsername,
+    source_display_name: sourceDisplayName,
+    source_global_name: sourceGlobalName || null
+  };
+}
+
 function isUsefulContextContent(content, commandPrefix) {
   const trimmed = String(content || '').trim();
   if (!trimmed) {
@@ -121,11 +147,14 @@ function buildDiscordLangGraphPayload(options) {
   const message = options.message;
   const text = String(options.text || '').trim();
   const messageMode = options.messageMode || 'normal';
+  const sourceIdentity = deriveSourceIdentity(message);
 
   const payload = {
     event: {
       source: 'discord',
-      source_user_id: message.author.id,
+      source_user_id: sourceIdentity.source_user_id,
+      source_display_name: sourceIdentity.source_display_name,
+      source_username: sourceIdentity.source_username,
       source_message_id: message.id,
       guild_id: message.guild ? message.guild.id : null,
       channel_id: message.channel.id,
@@ -134,6 +163,10 @@ function buildDiscordLangGraphPayload(options) {
       message_mode: messageMode
     }
   };
+
+  if (sourceIdentity.source_global_name) {
+    payload.event.source_global_name = sourceIdentity.source_global_name;
+  }
 
   if (options.testMetadata) {
     payload.event.test_metadata = options.testMetadata;
@@ -211,7 +244,10 @@ async function sendPayloadToLangGraph(options) {
       trigger: payload && payload.event && payload.event.interaction_metadata
         ? payload.event.interaction_metadata.trigger
         : undefined,
-      textLength: payload && payload.event && payload.event.text ? payload.event.text.length : 0
+      textLength: payload && payload.event && payload.event.text ? payload.event.text.length : 0,
+      sourceUserId: payload && payload.event ? payload.event.source_user_id : undefined,
+      sourceDisplayName: payload && payload.event ? payload.event.source_display_name : undefined,
+      sourceUsername: payload && payload.event ? payload.event.source_username : undefined
     },
     'Sending LangGraph payload'
   );
