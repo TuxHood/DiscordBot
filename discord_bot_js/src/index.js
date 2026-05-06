@@ -1,5 +1,5 @@
 const pino = require('pino');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 
 const { config } = require('./config');
 const { VoiceManager } = require('./voice/voiceManager');
@@ -12,6 +12,25 @@ const {
   getReferencedMessageMetadata,
   collectRecentChannelContext
 } = require('./integrations/langgraph');
+
+// Discord Coding Policy & Handlers
+const {
+  classifyDiscordCodeIntent,
+  ALLOW_HEAVY_CODING,
+  ALLOW_CODE_ATTACHMENTS,
+  MAX_GENERATED_FILE_BYTES
+} = require('./policies/discordCodingPolicy');
+
+const {
+  generateTemplate
+} = require('./handlers/codeGenerator');
+
+const {
+  validateAttachment,
+  downloadAttachment,
+  storeFileMetadata,
+  summarizeFile
+} = require('./handlers/fileHandler');
 
 const logger = pino({
   level: config.logLevel,
@@ -77,6 +96,83 @@ client.on('messageCreate', async (message) => {
   if (message.author.bot || !message.guild) {
     return;
   }
+
+  // POLICY: Handle file attachments first
+  if (message.attachments && message.attachments.size > 0) {
+    try {
+      const attachmentArray = Array.from(message.attachments.values());
+      const summaries = [];
+      let hasInvalidFile = false;
+
+      for (const att of attachmentArray) {
+        const validation = validateAttachment(att);
+        
+        if (!validation.valid) {
+          hasInvalidFile = true;
+          summaries.push(`❌ **${att.name}**: ${validation.reason}`);
+          continue;
+        }
+
+        try {
+          const { content } = await downloadAttachment(att);
+          const summary = summarizeFile(att.name, content);
+          
+          // Store metadata (NEVER execute)
+          storeFileMetadata(
+            message.guildId,
+            message.channelId,
+            message.id,
+            message.author.id,
+            att.name,
+            content
+          );
+          
+          let summaryText = `✅ **${summary.filename}** (${summary.size} bytes, ${summary.lines} lines)`;
+          if (summary.hasPreview && summary.preview.length > 0) {
+            summaryText += `\n\`\`\`\n${summary.preview}\n\`\`\``;
+          }
+          summaries.push(summaryText);
+          
+          logger.info(
+            {
+              filename: att.name,
+              size: summary.size,
+              userId: message.author.id,
+              guildId: message.guildId
+            },
+            'Discord file intake received'
+          );
+        } catch (err) {
+          logger.error({ err, filename: att.name }, 'Error downloading attachment');
+          summaries.push(`⚠️  **${att.name}**: Failed to download`);
+        }
+      }
+
+      const responseText = summaries.length > 0
+        ? summaries.join('\n\n')
+        : 'I received your files.';
+      
+      const fullReply = responseText + '\n\n💾 I\'ve saved these to my intake folder. I won\'t execute them.\n\nI can create a coding workspace if you want me to properly refactor or build on these. Just ask!';
+
+      await message.reply({
+        content: fullReply.length > 2000 ? fullReply.slice(0, 1997) + '...' : fullReply,
+        flags: 64  // ephemeral/silent
+      });
+
+      // Don't process as command after handling attachments
+      if (!message.content.startsWith(config.prefix)) {
+        return;
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error handling attachments');
+      await message.reply({
+        content: `Error processing files: ${err.message}`,
+        flags: 64
+      });
+      return;
+    }
+  }
+
   const isCommand = message.content.startsWith(config.prefix);
 
   if (isCommand) {
@@ -247,6 +343,73 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
+  // POLICY: Check coding intent before LangGraph routing
+  const intent = classifyDiscordCodeIntent(message.content);
+
+  if (intent.isHeavyCodingRequest && !ALLOW_HEAVY_CODING) {
+    logger.info(
+      {
+        intent: 'heavy_coding',
+        action: 'deferred',
+        userId: message.author.id,
+        guildId: message.guildId
+      },
+      'Discord heavy coding request blocked by policy'
+    );
+
+    await message.reply({
+      content: `I don't run heavy coding jobs directly in Discord, darling. It gets messy fast.\n\nI can send you small starter files here, but full projects belong in a proper workspace.\n\nSend me a code file and I'll save it, or open the coding workspace on the dashboard and I'll help you there.`,
+      flags: 64
+    });
+    return;
+  }
+
+  if (intent.isSmallFileRequest && ALLOW_CODE_ATTACHMENTS && intent.suggestedTemplate) {
+    try {
+      const generated = generateTemplate(intent.suggestedTemplate);
+      const contentBytes = Buffer.byteLength(generated.content, 'utf8');
+
+      if (contentBytes > MAX_GENERATED_FILE_BYTES) {
+        await message.reply({
+          content: `That file template would be too large to send as an attachment. Try asking for the code workspace instead.`,
+          flags: 64
+        });
+        return;
+      }
+
+      const attachment = new AttachmentBuilder(
+        Buffer.from(generated.content, 'utf8'),
+        { name: generated.filename }
+      );
+
+      logger.info(
+        {
+          template: intent.suggestedTemplate,
+          filename: generated.filename,
+          bytes: contentBytes,
+          userId: message.author.id,
+          guildId: message.guildId
+        },
+        'Discord small file generated'
+      );
+
+      await message.reply({
+        content: `Here, I made it as a file so Discord doesn't butcher the formatting.`,
+        files: [attachment],
+        flags: 64
+      });
+      return;
+    } catch (err) {
+      logger.error({ err, template: intent.suggestedTemplate }, 'Error generating file for Discord');
+      await message.reply({
+        content: `Error generating file: ${err.message}`,
+        flags: 64
+      });
+      return;
+    }
+  }
+
+  // Normal mention/reply routing to LangGraph
   const replyMetadata = await getReferencedMessageMetadata({ message, logger });
   const replyToBotMessageId = replyMetadata && replyMetadata.reply_to_author_is_bot
     ? replyMetadata.reply_to_message_id
@@ -338,32 +501,28 @@ client.on('messageCreate', async (message) => {
 });
 
 // n8n mention ingress intentionally disabled.
-// registerN8nMentionForwarding({ client, config, logger });
 
-startApiServer({ client, config, logger, voiceManager })
+client.login(config.discordToken)
   .then(() => {
-    logger.info('HTTP API server started');
+    logger.info('Discord client logged in successfully');
   })
   .catch((err) => {
-    logger.fatal({ err }, 'Failed to start HTTP API server');
+    logger.error({ err }, 'Failed to log in to Discord');
     process.exit(1);
   });
 
-client
-  .login(config.discordToken)
-  .then(() => {
-    logger.info('Discord login initiated');
-  })
-  .catch((err) => {
-    logger.fatal({ err }, 'Discord login failed');
-    process.exit(1);
-  });
+startApiServer({ client, logger, config });
 
-process.on('unhandledRejection', (reason) => {
-  logger.error({ reason }, 'Unhandled promise rejection');
+process.on('SIGINT', () => {
+  logger.info('Received SIGINT, shutting down gracefully');
+  client.destroy();
+  process.exit(0);
 });
 
-process.on('uncaughtException', (err) => {
-  logger.fatal({ err }, 'Uncaught exception');
-  process.exit(1);
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM, shutting down gracefully');
+  client.destroy();
+  process.exit(0);
 });
+
+module.exports = { client };
