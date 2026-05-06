@@ -1,5 +1,5 @@
 const pino = require('pino');
-const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
+const { ActivityType, Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
 
 const { config } = require('./config');
 const { VoiceManager } = require('./voice/voiceManager');
@@ -66,26 +66,39 @@ const voiceManager = new VoiceManager({
   }
 });
 
-// Status cycling
-const statuses = ['I am working really hard >.<', 'Why Zero Two and not me...']; // Cycling status
-let statusIndex = 0;
-
-const changeStatus = () => {
+const applyPresence = () => {
   try {
-    const status = statuses[statusIndex];
-    client.user.setActivity(status, { type: 'PLAYING' });
-    statusIndex = (statusIndex + 1) % statuses.length;
+    if (!client.user) {
+      return;
+    }
+
+    if (config.presenceMode === 'live') {
+      client.user.setPresence({
+        activities: [{
+          name: config.livePresenceName,
+          type: ActivityType.Streaming,
+          url: config.liveStreamUrl
+        }],
+        status: 'online'
+      });
+      return;
+    }
+
+    client.user.setPresence({
+      activities: [{
+        name: config.normalPresenceName,
+        type: ActivityType.Playing
+      }],
+      status: 'online'
+    });
   } catch (err) {
     logger.error({ err }, 'Failed to change bot status');
   }
 };
 
-client.once('clientReady', () => {
-  logger.info({ user: client.user ? client.user.tag : 'unknown' }, 'Discord client is ready');
-  
-  // Start status cycling
-  changeStatus();
-  setInterval(changeStatus, 30000);
+client.once('ready', () => {
+  logger.info({ user: client.user ? client.user.tag : 'unknown', presenceMode: config.presenceMode }, 'Discord client is ready');
+  applyPresence();
 });
 
 client.on('error', (err) => {

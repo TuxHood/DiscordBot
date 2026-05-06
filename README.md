@@ -34,7 +34,13 @@ The current deployment path is the Node.js bot in [discord_bot_js/](discord_bot_
    - `LAVALINK_PASSWORD`
    - `LAVALINK_SECURE` (optional, defaults to `false`)
 
-5. Start the bot:
+5. Optional presence settings:
+
+   - `DISCORD_PRESENCE_MODE=normal` keeps the bot on "Toying with the server"
+   - `DISCORD_PRESENCE_MODE=live` switches to a streaming presence with "master >.<" and the Twitch link `https://www.twitch.tv/tuxhood`
+   - `DISCORD_LIVE_STREAM_URL`, `DISCORD_LIVE_PRESENCE_NAME`, and `DISCORD_NORMAL_PRESENCE_NAME` can override the defaults
+
+6. Start the bot:
 
    ```bash
    npm start

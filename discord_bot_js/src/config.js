@@ -45,6 +45,10 @@ const config = {
   discordToken: requireEnv('DISCORD_TOKEN'),
   prefix: process.env.DISCORD_PREFIX || '!',
   logLevel: process.env.LOG_LEVEL || 'info',
+  presenceMode: (process.env.DISCORD_PRESENCE_MODE || 'normal').trim().toLowerCase(),
+  livePresenceName: process.env.DISCORD_LIVE_PRESENCE_NAME || 'master >.<',
+  liveStreamUrl: process.env.DISCORD_LIVE_STREAM_URL || 'https://www.twitch.tv/tuxhood',
+  normalPresenceName: process.env.DISCORD_NORMAL_PRESENCE_NAME || 'Toying with the server',
   httpHost: process.env.HTTP_HOST || '127.0.0.1',
   httpPort: parseIntOrDefault(process.env.HTTP_PORT, 3000),
   apiToken: requireEnv('API_TOKEN'),
@@ -67,6 +71,10 @@ if (Number.isNaN(config.defaultVolume) || config.defaultVolume <= 0 || config.de
 
 if (Number.isNaN(config.langGraphTimeoutMs) || config.langGraphTimeoutMs < 1000) {
   throw new Error('LANGGRAPH_TIMEOUT_MS must be a number >= 1000');
+}
+
+if (config.presenceMode !== 'normal' && config.presenceMode !== 'live') {
+  throw new Error('DISCORD_PRESENCE_MODE must be "normal" or "live"');
 }
 
 module.exports = {
