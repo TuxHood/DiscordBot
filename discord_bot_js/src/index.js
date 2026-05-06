@@ -27,6 +27,7 @@ const {
 
 const {
   validateAttachment,
+  classifyAttachment,
   downloadAttachment,
   storeFileMetadata,
   summarizeFile
@@ -110,79 +111,158 @@ client.on('messageCreate', async (message) => {
     return;
   }
 
-  // POLICY: Handle file attachments first
+  // Helper: Check if message is addressed to bot
+  const isAddressed = () => {
+    // Direct mention
+    if (client.user && message.mentions.has(client.user)) {
+      return true;
+    }
+    // Reply to bot
+    if (message.reference) {
+      return true;
+    }
+    // Prefix command
+    if (message.content.startsWith(config.prefix)) {
+      return true;
+    }
+    // DM
+    if (message.isDMChannel && message.isDMChannel()) {
+      return true;
+    }
+    return false;
+  };
+
+  // POLICY: Handle file attachments (only if addressed)
   if (message.attachments && message.attachments.size > 0) {
-    try {
-      const attachmentArray = Array.from(message.attachments.values());
-      const summaries = [];
-      let hasInvalidFile = false;
-
-      for (const att of attachmentArray) {
-        const validation = validateAttachment(att);
-        
-        if (!validation.valid) {
-          hasInvalidFile = true;
-          summaries.push(`❌ **${att.name}**: ${validation.reason}`);
-          continue;
-        }
-
-        try {
-          const { content } = await downloadAttachment(att);
-          const summary = summarizeFile(att.name, content);
-          
-          // Store metadata (NEVER execute)
-          storeFileMetadata(
-            message.guildId,
-            message.channelId,
-            message.id,
-            message.author.id,
-            att.name,
-            content
-          );
-          
-          let summaryText = `✅ **${summary.filename}** (${summary.size} bytes, ${summary.lines} lines)`;
-          if (summary.hasPreview && summary.preview.length > 0) {
-            summaryText += `\n\`\`\`\n${summary.preview}\n\`\`\``;
-          }
-          summaries.push(summaryText);
-          
-          logger.info(
-            {
-              filename: att.name,
-              size: summary.size,
-              userId: message.author.id,
-              guildId: message.guildId
-            },
-            'Discord file intake received'
-          );
-        } catch (err) {
-          logger.error({ err, filename: att.name }, 'Error downloading attachment');
-          summaries.push(`⚠️  **${att.name}**: Failed to download`);
-        }
-      }
-
-      const responseText = summaries.length > 0
-        ? summaries.join('\n\n')
-        : 'I received your files.';
-      
-      const fullReply = responseText + '\n\n💾 I\'ve saved these to my intake folder. I won\'t execute them.\n\nI can create a coding workspace if you want me to properly refactor or build on these. Just ask!';
-
-      await message.reply({
-        content: fullReply.length > 2000 ? fullReply.slice(0, 1997) + '...' : fullReply,
-        flags: 64  // ephemeral/silent
-      });
-
-      // Don't process as command after handling attachments
-      if (!message.content.startsWith(config.prefix)) {
+    const addressed = isAddressed();
+    
+    if (!addressed) {
+      // Silently ignore unaddressed attachments
+      logger.debug(
+        {
+          guildId: message.guildId,
+          channelId: message.channelId,
+          userId: message.author.id,
+          attachmentCount: message.attachments.size
+        },
+        'Ignoring unaddressed attachments'
+      );
+      // If message has no text content, don't process further
+      if (!message.content || message.content.trim() === '') {
         return;
       }
-    } catch (err) {
-      logger.error({ err }, 'Error handling attachments');
-      await message.reply({
-        content: `Error processing files: ${err.message}`,
-        flags: 64
-      });
-      return;
+      // Otherwise continue to process any text commands
+    } else {
+      // Bot is addressed - process attachments
+      try {
+        const attachmentArray = Array.from(message.attachments.values());
+        const codeFiles = [];
+        const images = [];
+        const unsupported = [];
+
+        for (const att of attachmentArray) {
+          const classification = classifyAttachment(att);
+          
+          if (classification.category === 'code_text') {
+            if (classification.valid) {
+              try {
+                const { content: fileContent } = await downloadAttachment(att);
+                const summary = summarizeFile(att.name, fileContent);
+                
+                storeFileMetadata(
+                  message.guildId,
+                  message.channelId,
+                  message.id,
+                  message.author.id,
+                  att.name,
+                  fileContent
+                );
+                
+                let summaryText = `✅ **${summary.filename}** (${summary.size} bytes, ${summary.lines} lines)`;
+                if (summary.hasPreview && summary.preview.length > 0) {
+                  summaryText += `\n\`\`\`\n${summary.preview}\n\`\`\``;
+                }
+                codeFiles.push(summaryText);
+                
+                logger.info(
+                  {
+                    filename: att.name,
+                    size: summary.size,
+                    userId: message.author.id,
+                    guildId: message.guildId,
+                    category: 'code_text'
+                  },
+                  'Discord code file intake received'
+                );
+              } catch (err) {
+                logger.error({ err, filename: att.name }, 'Error downloading code file');
+                unsupported.push(`⚠️  **${att.name}**: Failed to download`);
+              }
+            } else {
+              unsupported.push(`⚠️  **${att.name}**: ${classification.reason}`);
+            }
+          } else if (classification.category === 'image') {
+            images.push({
+              name: att.name,
+              url: att.url,
+              contentType: classification.contentType,
+              size: att.size
+            });
+            
+            logger.info(
+              {
+                filename: att.name,
+                userId: message.author.id,
+                guildId: message.guildId,
+                category: 'image'
+              },
+              'Discord image received'
+            );
+          } else {
+            unsupported.push(`📦 **${att.name}**: ${classification.reason}`);
+          }
+        }
+
+        const responses = [];
+
+        if (codeFiles.length > 0) {
+          let fileReply = '✅ **Code files received:**\n' + codeFiles.join('\n\n');
+          fileReply += '\n\n💾 I\'ve saved these to my intake folder. I won\'t execute them.\n\nI can create a coding workspace if you want me to properly inspect or refactor these. Just ask!';
+          responses.push(fileReply);
+        }
+
+        if (images.length > 0) {
+          let imageReply = `✅ I received ${images.length} image(s), darling. `;
+          imageReply += 'I can see images now, but my Discord vision path is not wired yet. ';
+          imageReply += 'I won\'t treat them as code files, but I also can\'t analyze them in Discord right now. ';
+          imageReply += 'You can still ask me about them using OpenWebUI if you need analysis!';
+          responses.push(imageReply);
+        }
+
+        if (unsupported.length > 0) {
+          responses.push('⚠️  **Unsupported files:**\n' + unsupported.join('\n') + '\n\nI can take code/text files here, but these types need the workspace.');
+        }
+
+        if (responses.length > 0) {
+          const fullReply = responses.join('\n\n');
+          await message.reply({
+            content: fullReply.length > 2000 ? fullReply.slice(0, 1997) + '...' : fullReply,
+            flags: 64
+          });
+        }
+
+        // Don't process as command after handling attachments if only attachments present
+        if (!message.content.startsWith(config.prefix)) {
+          return;
+        }
+      } catch (err) {
+        logger.error({ err }, 'Error handling attachments');
+        await message.reply({
+          content: `Error processing files: ${err.message}`,
+          flags: 64
+        });
+        return;
+      }
     }
   }
 
