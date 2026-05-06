@@ -155,3 +155,82 @@ module.exports = {
   MAX_ATTACHMENT_BYTES,
   INTAKE_DIR
 };
+
+// Attachment type classification
+const CODE_EXTENSIONS = new Set([
+  ".py", ".js", ".ts", ".tsx", ".jsx", ".cs", ".java",
+  ".cpp", ".c", ".h", ".json", ".yaml", ".yml", ".md",
+  ".txt", ".html", ".css", ".sql", ".sh", ".conf", ".env"
+]);
+
+const IMAGE_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg"
+]);
+
+const ARCHIVE_EXTENSIONS = new Set([
+  ".zip", ".tar", ".gz", ".7z", ".rar"
+]);
+
+function classifyAttachment(attachment) {
+  if (!attachment || !attachment.name) {
+    return { category: "unsupported", valid: false, reason: "No filename" };
+  }
+
+  const ext = path.extname(attachment.name).toLowerCase();
+  
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    return {
+      category: "image",
+      valid: true,
+      extension: ext,
+      contentType: attachment.contentType || "image/*"
+    };
+  }
+  
+  if (CODE_EXTENSIONS.has(ext)) {
+    if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES) {
+      return {
+        category: "code_text",
+        valid: false,
+        reason: "File too large (max 10 MB)",
+        extension: ext
+      };
+    }
+    return {
+      category: "code_text",
+      valid: true,
+      extension: ext
+    };
+  }
+  
+  if (ARCHIVE_EXTENSIONS.has(ext)) {
+    return {
+      category: "archive",
+      valid: false,
+      reason: "Archives need workspace processing",
+      extension: ext
+    };
+  }
+  
+  return {
+    category: "unsupported",
+    valid: false,
+    reason: "Unsupported file type",
+    extension: ext
+  };
+}
+
+module.exports = {
+  validateAttachment,
+  downloadAttachment,
+  sanitizeFilename,
+  storeFileMetadata,
+  summarizeFile,
+  classifyAttachment,
+  CODE_EXTENSIONS,
+  IMAGE_EXTENSIONS,
+  ARCHIVE_EXTENSIONS,
+  SAFE_EXTENSIONS,
+  MAX_ATTACHMENT_BYTES,
+  INTAKE_DIR
+};
