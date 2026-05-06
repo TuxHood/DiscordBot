@@ -47,8 +47,26 @@ const voiceManager = new VoiceManager({
   }
 });
 
+// Status cycling
+const statuses = ['hard >.<', 'with my master UwU'];
+let statusIndex = 0;
+
+const changeStatus = () => {
+  try {
+    const status = statuses[statusIndex];
+    client.user.setActivity(status, { type: 'PLAYING' });
+    statusIndex = (statusIndex + 1) % statuses.length;
+  } catch (err) {
+    logger.error({ err }, 'Failed to change bot status');
+  }
+};
+
 client.once('clientReady', () => {
   logger.info({ user: client.user ? client.user.tag : 'unknown' }, 'Discord client is ready');
+  
+  // Start status cycling
+  changeStatus();
+  setInterval(changeStatus, 30000);
 });
 
 client.on('error', (err) => {
