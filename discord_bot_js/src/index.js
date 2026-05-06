@@ -67,7 +67,7 @@ const voiceManager = new VoiceManager({
 });
 
 // Status cycling
-const statuses = ['hard >.<', 'with my master UwU'];
+const statuses = ['I am working really hard >.<', 'Why Zero Two and not me...']; // Cycling status
 let statusIndex = 0;
 
 const changeStatus = () => {
