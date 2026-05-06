@@ -53,6 +53,12 @@ Conversational ingress now also sends lightweight context to LangGraph:
 - Up to 3 recent prior messages from the bot in the same channel
 - Replied-to message metadata and content when the current message is a reply (including replying to other users while mentioning the bot)
 
+LangGraph payloads also include speaker identity metadata for attribution:
+
+- `source_display_name`
+- `source_username`
+- `source_global_name` (when available)
+
 LangGraph environment variables used by these flows:
 
 - `LANGGRAPH_BASE_URL` - base URL for the LangGraph service, such as `http://127.0.0.1:8000`
